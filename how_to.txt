@@ -1,0 +1,50 @@
+# keep up to date osm2pgsql db
+
+mkdir up-to-date
+cd up-to-date
+mkdir diffs
+mkdir log
+osmosis --read-replication-interval-init workingDirectory=.
+# find timestamp of your osm download, back up an hour or so...
+# then feed into peter's nice tool
+wget "http://toolserver.org/~mazder/replicate-sequences/?Y=2011&m=03&d=13&H=15&i=00&s=00#" -O state.txt
+# backup original state
+cp state.txt state_og.txt
+
+# run once, then setup keeup.sh script on cron
+osmosis --read-replication-interval workingDirectory=. --simplify-change  --write-xml-change "diffs/changes.osc.gz"
+
+# import the diff
+osm2pgsql diffs/changes.osc.gz --append --slim -d <dbname>
+
+# keepup.sh
+#!/bin/bash
+
+# run on a 10 minute cron:
+# */10 * * * * /home/dane/projects/eqjp/up-to-date/keepup.sh
+
+# make sure osmososis/osm2pgsql are on your PATH
+# cron does not inherit from your env
+export PATH=/usr/local/bin/:$PATH
+DBNAME=<dbname>
+DIR=/home/<your user>/projects/up-to-date
+
+# lock file
+LOCK=$DIR/keepup.lock
+
+cd $DIR
+
+if [ -f $LOCK ]; then
+  if [ "$(ps -p `cat $LOCK` | wc -l)" -gt 1 ]; then
+    echo "Locked"
+    exit 1
+  else
+    rm $LOCK
+  fi
+fi
+echo $$ >$LOCK
+OSM_CHANGE=diffs/latest.osc.gz
+rm $OSM_CHANGE
+osmosis --read-replication-interval workingDirectory=. --simplify-change  --write-xml-change $OSM_CHANGE
+osm2pgsql $OSM_CHANGE --append --slim -d $DBNAME
+rm $LOCK
